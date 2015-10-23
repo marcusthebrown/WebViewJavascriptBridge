@@ -27,6 +27,7 @@ public class WebViewJavascriptBridge implements Serializable {
     Map<String, WVJBHandler> _messageHandlers;
     Map<String, WVJBResponseCallback> _responseCallbacks;
     long _uniqueId;
+    private static ObjectMapper MAPPER = new ObjectMapper();
 
     public WebViewJavascriptBridge(Activity context, WebView webview, WVJBHandler handler) {
         this.mContext = context;
@@ -40,6 +41,8 @@ public class WebViewJavascriptBridge implements Serializable {
         mWebView.addJavascriptInterface(this, "_WebViewJavascriptBridge");
         mWebView.setWebViewClient(new MyWebViewClient());
         mWebView.setWebChromeClient(new MyWebChromeClient());     //optional, for show console and alert
+        MAPPER.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
+        MAPPER.setSerializationInclusion(JsonInclude.Include.NON_NULL);
     }
 
     public static String convertStreamToString(java.io.InputStream is) {
@@ -108,11 +111,10 @@ public class WebViewJavascriptBridge implements Serializable {
 
 
     private void _callbackJs(String callbackIdJs, String data) {
-        //TODO: CALL js to call back;
-        Map<String, String> message = new HashMap<String, String>();
-        message.put("responseId", callbackIdJs);
-        message.put("responseData", data);
-        _dispatchMessage(message);
+        MessagePayload messagePayload = new MessagePayload();
+        messagePayload.setData(data);
+        messagePayload.setResponseId(callbackIdJs);
+        _dispatchMessage(messagePayload);
     }
 
     @JavascriptInterface
@@ -128,8 +130,11 @@ public class WebViewJavascriptBridge implements Serializable {
             if (null != handlerName) {
                 handler = _messageHandlers.get(handlerName);
                 if (null == handler) {
-                    Log.e("test", "WVJB Warning: No handler for " + handlerName);
+                    Log.e("test", "WVJB Warning: No handle" +
+                            "" +
+                            "r for " + handlerName);
                     return;
+
                 }
             } else {
                 handler = _messageHandler;
@@ -156,24 +161,30 @@ public class WebViewJavascriptBridge implements Serializable {
     }
 
     private void _sendData(String data, WVJBResponseCallback responseCallback, String handlerName) {
-        Map<String, String> message = new HashMap<String, String>();
-        message.put("data", data);
+        MessagePayload messagePayload = new MessagePayload();
+        messagePayload.setData(data);
+        messagePayload.setHandlerName(handlerName);
         if (null != responseCallback) {
             String callbackId = "java_cb_" + (++_uniqueId);
             _responseCallbacks.put(callbackId, responseCallback);
-            message.put("callbackId", callbackId);
+            messagePayload.setCallbackId(callbackId);
         }
-        if (null != handlerName) {
-            message.put("handlerName", handlerName);
-        }
-        _dispatchMessage(message);
+        _dispatchMessage(messagePayload);
     }
 
-    private void _dispatchMessage(Map<String, String> message) {
-        String messageJSON = new JSONObject(message).toString();
+    private void _dispatchMessage(MessagePayload message) {
+        String messageJSON = null;
+        try {
+            messageJSON = MAPPER.writeValueAsString(message);
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+        }
         Log.d("test", "sending:" + messageJSON);
         final String javascriptCommand =
-                String.format("javascript:WebViewJavascriptBridge._handleMessageFromJava('%s');", doubleEscapeString(messageJSON));
+                String.format(
+                  "javascript:WebViewJavascriptBridge._handleMessageFromJava('%s');",
+                  doubleEscapeString(messageJSON)
+                );
         mContext.runOnUiThread(new Runnable() {
             @Override
             public void run() {
@@ -214,4 +225,55 @@ public class WebViewJavascriptBridge implements Serializable {
         return result;
     }
 
+    class MessagePayload {
+        private JsonNode data;
+        private String handlerName;
+        private String callbackId;
+        private String responseId;
+
+        public MessagePayload() {
+        }
+
+        public JsonNode getData() {
+            return data;
+        }
+
+        /**
+         * Takes a string of json data and transforms it into a JsonNode.
+         *
+         * @param data
+         */
+        public void setData(String data) {
+            try {
+                this.data = MAPPER.readTree(data);
+            } catch (IOException e) {
+                e.printStackTrace();
+                throw new IllegalArgumentException("The string was not valid json: " + data);
+            }
+        }
+
+        public String getHandlerName() {
+            return handlerName;
+        }
+
+        public void setHandlerName(String handlerName) {
+            this.handlerName = handlerName;
+        }
+
+        public String getCallbackId() {
+            return callbackId;
+        }
+
+        public void setCallbackId(String callbackId) {
+            this.callbackId = callbackId;
+        }
+
+        public String getResponseId() {
+            return responseId;
+        }
+
+        public void setResponseId(String responseId) {
+            this.responseId = responseId;
+        }
+    }
 }
